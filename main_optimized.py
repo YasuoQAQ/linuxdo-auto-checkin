@@ -809,24 +809,98 @@ class LinuxDoBrowserOptimized:
             self.page.get(self.config.HOME_URL)
             time.sleep(random.uniform(3, 5))
             
-            # 查找主题列表
+            # 查找主题列表 - 增强版本
             topic_selectors = [
-                ".title a",
-                "[data-topic-id] .title",
-                ".topic-list-item .title",
-                ".topic-title"
+                ".title a",                    # 原始选择器
+                "[data-topic-id] .title",     # 带数据属性的标题
+                ".topic-list-item .title",    # 主题列表项的标题
+                ".topic-title",               # 主题标题
+                "a[href*='/t/']",             # 包含主题链接的a标签
+                ".topic-list a",              # 主题列表中的链接
+                ".topic-list-body a",         # 主题列表主体中的链接
+                "tbody tr a",                 # 表格中的链接
+                ".main-link a",               # 主链接
+                ".topic-title-link"           # 主题标题链接
             ]
             
             topics = []
-            for selector in topic_selectors:
-                elements = self.page.eles(selector, timeout=5)
+            logger.info("正在搜索主题列表...")
+            
+            for i, selector in enumerate(topic_selectors):
+                elements = self.page.eles(selector, timeout=3)
+                logger.debug(f"选择器 '{selector}' 找到 {len(elements)} 个元素")
                 if elements:
                     topics = elements
+                    logger.success(f"使用选择器 '{selector}' 找到 {len(topics)} 个主题")
                     break
             
+            # 如果仍然没找到，尝试用JavaScript查找
             if not topics:
-                logger.warning("未找到主题列表")
-                return
+                logger.warning("CSS选择器未找到主题，尝试JavaScript查找...")
+                try:
+                    js_topics = self.page.run_js("""
+                        // 查找各种可能的主题链接
+                        let links = [];
+                        
+                        // 方法1: 查找包含/t/的链接
+                        document.querySelectorAll('a[href*="/t/"]').forEach(a => {{
+                            if (a.textContent.trim() && a.href.includes('/t/')) {{
+                                links.push(a);
+                            }}
+                        }});
+                        
+                        // 方法2: 查找标题类元素
+                        document.querySelectorAll('.title, .topic-title, .main-link').forEach(el => {{
+                            let link = el.querySelector('a') || el;
+                            if (link.href && link.href.includes('/t/')) {{
+                                links.push(link);
+                            }}
+                        }});
+                        
+                        // 去重
+                        let uniqueLinks = [...new Set(links)];
+                        console.log('JavaScript找到主题数量:', uniqueLinks.length);
+                        
+                        return uniqueLinks.length;
+                    """)
+                    
+                    if js_topics > 0:
+                        logger.info(f"JavaScript找到 {js_topics} 个主题链接")
+                        # 重新用JavaScript获取的信息来查找元素
+                        topics = self.page.eles('a[href*="/t/"]', timeout=5)
+                        if topics:
+                            logger.success(f"使用JavaScript方法找到 {len(topics)} 个主题")
+                except Exception as e:
+                    logger.debug(f"JavaScript搜索失败: {e}")
+            
+            if not topics:
+                logger.warning("未找到主题列表，尝试访问具体版块...")
+                # 尝试访问一些具体的版块
+                sections = [
+                    "https://linux.do/c/tech/8",
+                    "https://linux.do/c/life/7", 
+                    "https://linux.do/latest"
+                ]
+                
+                for section_url in sections:
+                    try:
+                        logger.info(f"尝试访问版块: {section_url}")
+                        self.page.get(section_url)
+                        time.sleep(random.uniform(2, 4))
+                        
+                        # 在版块页面查找主题
+                        section_topics = self.page.eles('a[href*="/t/"]', timeout=5)
+                        if section_topics:
+                            topics = section_topics
+                            logger.success(f"在版块 {section_url} 找到 {len(topics)} 个主题")
+                            break
+                    except Exception as e:
+                        logger.debug(f"访问版块 {section_url} 失败: {e}")
+                        continue
+                
+                if not topics:
+                    logger.warning("所有方法都未找到主题列表，跳过浏览任务")
+                    return
             
             # 随机选择主题
             topic_count = random.randint(self.config.MIN_TOPICS, min(len(topics), self.config.MAX_TOPICS))
