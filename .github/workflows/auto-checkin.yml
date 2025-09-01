@@ -57,6 +57,7 @@ jobs:
         BROWSE_ENABLED: true
         CHROME_BIN: /usr/bin/google-chrome-stable
         DISPLAY: :99
+        GITHUB_ACTIONS: true
       run: |
         # Start virtual display
         export DISPLAY=:99
