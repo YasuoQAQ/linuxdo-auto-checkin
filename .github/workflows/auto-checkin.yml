@@ -27,12 +27,18 @@ jobs:
     - name: Install browser dependencies
       run: |
         sudo apt-get update
+        sudo apt-get install -y wget gnupg
+        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+        sudo apt-get update
+        sudo apt-get install -y google-chrome-stable
+        
+        # Install additional dependencies
         sudo apt-get install -y \
+          xvfb \
           libnss3 \
-          libnspr4 \
           libatk-bridge2.0-0 \
           libdrm2 \
-          libxkbcommon0 \
           libxss1 \
           libgconf-2-4 \
           libxrandr2 \
@@ -41,7 +47,7 @@ jobs:
           libatk1.0-0 \
           libcairo-gobject2 \
           libgtk-3-0 \
-          libgdk-pixbuf2.0-0
+          libgdk-pixbuf2.0-0 || true
     
     - name: Run LinuxDo check-in
       env:
@@ -49,7 +55,15 @@ jobs:
         LINUXDO_PASSWORD: ${{ secrets.LINUXDO_PASSWORD }}
         HEADLESS: true
         BROWSE_ENABLED: true
+        CHROME_BIN: /usr/bin/google-chrome-stable
+        DISPLAY: :99
       run: |
+        # Start virtual display
+        export DISPLAY=:99
+        Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
+        sleep 3
+        
+        # Run the script
         python main_optimized.py
     
     - name: Upload logs (if needed)
