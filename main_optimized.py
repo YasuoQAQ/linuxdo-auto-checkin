@@ -399,10 +399,16 @@ class LinuxDoBrowserOptimized:
                     self.page.get(self.config.LOGIN_URL)
                     time.sleep(random.uniform(2, 4))
             
-            # 处理 Turnstile 验证
-            turnstile_token = self.get_turnstile_token()
-            if turnstile_token:
-                logger.info("Turnstile 验证成功")
+            # 检查是否在GitHub Actions环境中
+            is_github_actions = os.environ.get('GITHUB_ACTIONS') == 'true'
+            
+            if not is_github_actions:
+                # 只在非GitHub Actions环境中处理 Turnstile 验证
+                turnstile_token = self.get_turnstile_token()
+                if turnstile_token:
+                    logger.info("Turnstile 验证成功")
+            else:
+                logger.info("GitHub Actions环境检测到，跳过Turnstile验证，直接使用JavaScript登录")
             
             # 尝试使用JavaScript直接登录（基于视觉识别的方法）
             return self.javascript_login()
@@ -613,98 +619,142 @@ class LinuxDoBrowserOptimized:
                 elif i == 9:
                     logger.warning("未检测到足够的输入框，强制尝试登录")
             
-            # JavaScript登录脚本
+            # JavaScript登录脚本 - 修复async问题
             login_script = f"""
-            try {{
-                console.log('开始JavaScript登录...');
-                
-                // 查找所有输入框
-                let inputs = document.querySelectorAll('input');
-                console.log('找到输入框数量:', inputs.length);
-                
-                if (inputs.length >= 2) {{
-                    // 方法1: 直接填写前两个输入框
-                    console.log('尝试填写输入框...');
+            (async function() {{
+                try {{
+                    console.log('开始JavaScript登录...');
                     
-                    // 用户名输入框（第一个）
-                    inputs[0].focus();
-                    inputs[0].value = '{self.config.USERNAME}';
-                    inputs[0].dispatchEvent(new Event('input', {{ bubbles: true }}));
-                    inputs[0].dispatchEvent(new Event('change', {{ bubbles: true }}));
-                    console.log('用户名填写完成');
+                    // 查找所有输入框
+                    let inputs = document.querySelectorAll('input');
+                    console.log('找到输入框数量:', inputs.length);
                     
-                    // 等待一下
-                    await new Promise(resolve => setTimeout(resolve, 500));
+                    if (inputs.length >= 2) {{
+                        // 方法1: 直接填写前两个输入框
+                        console.log('尝试填写输入框...');
+                        
+                        // 用户名输入框（第一个）
+                        inputs[0].focus();
+                        inputs[0].value = '{self.config.USERNAME}';
+                        inputs[0].dispatchEvent(new Event('input', {{ bubbles: true }}));
+                        inputs[0].dispatchEvent(new Event('change', {{ bubbles: true }}));
+                        console.log('用户名填写完成');
+                        
+                        // 等待一下
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                        
+                        // 密码输入框（第二个）
+                        inputs[1].focus();
+                        inputs[1].value = '{self.config.PASSWORD}';
+                        inputs[1].dispatchEvent(new Event('input', {{ bubbles: true }}));
+                        inputs[1].dispatchEvent(new Event('change', {{ bubbles: true }}));
+                        console.log('密码填写完成');
+                        
+                        // 等待一下
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        
+                        // 查找并点击登录按钮
+                        let buttons = document.querySelectorAll('button');
+                        console.log('找到按钮数量:', buttons.length);
+                        
+                        for (let btn of buttons) {{
+                            if (btn.textContent.includes('登录') || btn.textContent.includes('Login') || btn.type === 'submit') {{
+                                console.log('找到登录按钮，准备点击');
+                                btn.click();
+                                return '登录按钮已点击';
+                            }}
+                        }}
+                        
+                        // 如果没找到特定按钮，点击最后一个按钮
+                        if (buttons.length > 0) {{
+                            console.log('点击最后一个按钮');
+                            buttons[buttons.length - 1].click();
+                            return '点击了最后一个按钮';
+                        }}
+                        
+                        // 尝试按Enter键提交
+                        inputs[1].dispatchEvent(new KeyboardEvent('keydown', {{key: 'Enter'}}));
+                        return '按Enter键提交';
+                    }}
                     
-                    // 密码输入框（第二个）
-                    inputs[1].focus();
-                    inputs[1].value = '{self.config.PASSWORD}';
-                    inputs[1].dispatchEvent(new Event('input', {{ bubbles: true }}));
-                    inputs[1].dispatchEvent(new Event('change', {{ bubbles: true }}));
-                    console.log('密码填写完成');
+                    // 方法2: 通过占位符查找
+                    let emailInput = document.querySelector('input[placeholder*="邮件"], input[placeholder*="用户名"], input[placeholder*="email"], input[placeholder*="username"]');
+                    let passwordInput = document.querySelector('input[type="password"], input[placeholder*="密码"], input[placeholder*="password"]');
                     
-                    // 等待一下
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                    
-                    // 查找并点击登录按钮
-                    let buttons = document.querySelectorAll('button');
-                    console.log('找到按钮数量:', buttons.length);
-                    
-                    for (let btn of buttons) {{
-                        if (btn.textContent.includes('登录') || btn.textContent.includes('Login') || btn.type === 'submit') {{
-                            console.log('找到登录按钮，准备点击');
-                            btn.click();
-                            return '登录按钮已点击';
+                    if (emailInput && passwordInput) {{
+                        console.log('通过占位符找到输入框');
+                        emailInput.focus();
+                        emailInput.value = '{self.config.USERNAME}';
+                        emailInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                        
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                        
+                        passwordInput.focus();
+                        passwordInput.value = '{self.config.PASSWORD}';
+                        passwordInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                        
+                        // 查找提交按钮
+                        let submitBtn = document.querySelector('button[type="submit"], input[type="submit"]');
+                        if (submitBtn) {{
+                            submitBtn.click();
+                            return '通过占位符方法登录';
                         }}
                     }}
                     
-                    // 如果没找到特定按钮，点击最后一个按钮
-                    if (buttons.length > 0) {{
-                        console.log('点击最后一个按钮');
-                        buttons[buttons.length - 1].click();
-                        return '点击了最后一个按钮';
-                    }}
+                    return '未找到合适的输入框';
                     
-                    // 尝试按Enter键提交
-                    inputs[1].dispatchEvent(new KeyboardEvent('keydown', {{key: 'Enter'}}));
-                    return '按Enter键提交';
+                }} catch (error) {{
+                    console.error('JavaScript登录出错:', error);
+                    return 'JavaScript执行失败: ' + error.message;
                 }}
-                
-                // 方法2: 通过占位符查找
-                let emailInput = document.querySelector('input[placeholder*="邮件"], input[placeholder*="用户名"], input[placeholder*="email"], input[placeholder*="username"]');
-                let passwordInput = document.querySelector('input[type="password"], input[placeholder*="密码"], input[placeholder*="password"]');
-                
-                if (emailInput && passwordInput) {{
-                    console.log('通过占位符找到输入框');
-                    emailInput.focus();
-                    emailInput.value = '{self.config.USERNAME}';
-                    emailInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                    
-                    await new Promise(resolve => setTimeout(resolve, 500));
-                    
-                    passwordInput.focus();
-                    passwordInput.value = '{self.config.PASSWORD}';
-                    passwordInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                    
-                    // 查找提交按钮
-                    let submitBtn = document.querySelector('button[type="submit"], input[type="submit"], button:contains("登录")');
-                    if (submitBtn) {{
-                        submitBtn.click();
-                        return '通过占位符方法登录';
-                    }}
-                }}
-                
-                return '未找到合适的输入框';
-                
-            }} catch (error) {{
-                console.error('JavaScript登录出错:', error);
-                return 'JavaScript执行失败: ' + error.message;
-            }}
+            }})()
             """
             
             # 执行JavaScript登录
-            result = self.page.run_js(login_script)
-            logger.info(f"JavaScript执行结果: {result}")
+            try:
+                result = self.page.run_js(login_script, as_expr=True)
+                logger.info(f"JavaScript执行结果: {result}")
+            except Exception as e:
+                logger.warning(f"JavaScript执行出错，尝试简化版本: {e}")
+                # 简化版本，不使用async
+                simple_script = f"""
+                try {{
+                    console.log('使用简化JavaScript登录...');
+                    let inputs = document.querySelectorAll('input');
+                    console.log('找到输入框数量:', inputs.length);
+                    
+                    if (inputs.length >= 2) {{
+                        inputs[0].focus();
+                        inputs[0].value = '{self.config.USERNAME}';
+                        inputs[0].dispatchEvent(new Event('input', {{ bubbles: true }}));
+                        
+                        inputs[1].focus();
+                        inputs[1].value = '{self.config.PASSWORD}';
+                        inputs[1].dispatchEvent(new Event('input', {{ bubbles: true }}));
+                        
+                        let buttons = document.querySelectorAll('button');
+                        for (let btn of buttons) {{
+                            if (btn.textContent.includes('登录') || btn.textContent.includes('Login')) {{
+                                btn.click();
+                                return '简化登录成功';
+                            }}
+                        }}
+                        
+                        if (buttons.length > 0) {{
+                            buttons[buttons.length - 1].click();
+                            return '点击最后按钮';
+                        }}
+                        
+                        inputs[1].dispatchEvent(new KeyboardEvent('keydown', {{key: 'Enter'}}));
+                        return '按Enter提交';
+                    }}
+                    return '未找到输入框';
+                }} catch (error) {{
+                    return 'JavaScript出错: ' + error.message;
+                }}
+                """
+                result = self.page.run_js(simple_script)
+                logger.info(f"简化JavaScript执行结果: {result}")
             
             # 等待登录结果
             logger.info("等待登录结果...")
