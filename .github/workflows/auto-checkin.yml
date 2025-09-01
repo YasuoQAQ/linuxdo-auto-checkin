@@ -1,0 +1,63 @@
+name: LinuxDo Auto Check-in
+
+on:
+  schedule:
+    # 每天北京时间 8:00 和 20:00 运行 (UTC时间 0:00 和 12:00)
+    - cron: '0 0,12 * * *'
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Install browser dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libnss3 \
+          libnspr4 \
+          libatk-bridge2.0-0 \
+          libdrm2 \
+          libxkbcommon0 \
+          libxss1 \
+          libgconf-2-4 \
+          libxrandr2 \
+          libasound2 \
+          libpangocairo-1.0-0 \
+          libatk1.0-0 \
+          libcairo-gobject2 \
+          libgtk-3-0 \
+          libgdk-pixbuf2.0-0
+    
+    - name: Run LinuxDo check-in
+      env:
+        LINUXDO_USERNAME: ${{ secrets.LINUXDO_USERNAME }}
+        LINUXDO_PASSWORD: ${{ secrets.LINUXDO_PASSWORD }}
+        HEADLESS: true
+        BROWSE_ENABLED: true
+      run: |
+        python main_optimized.py
+    
+    - name: Upload logs (if needed)
+      if: failure()
+      uses: actions/upload-artifact@v3
+      with:
+        name: logs
+        path: |
+          *.png
+          *.html
+          *.log
