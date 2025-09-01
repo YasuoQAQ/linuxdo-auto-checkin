@@ -803,36 +803,79 @@ class LinuxDoBrowserOptimized:
             return False
     
     def browse_topics(self):
-        """浏览主题"""
+        """浏览主题 - 改进版本"""
         try:
             logger.info("开始浏览主题")
-            self.page.get(self.config.HOME_URL)
-            time.sleep(random.uniform(3, 5))
             
-            # 查找主题列表 - 增强版本
-            topic_selectors = [
-                ".title a",                    # 原始选择器
-                "[data-topic-id] .title",     # 带数据属性的标题
-                ".topic-list-item .title",    # 主题列表项的标题
-                ".topic-title",               # 主题标题
-                "a[href*='/t/']",             # 包含主题链接的a标签
-                ".topic-list a",              # 主题列表中的链接
-                ".topic-list-body a",         # 主题列表主体中的链接
-                "tbody tr a",                 # 表格中的链接
-                ".main-link a",               # 主链接
-                ".topic-title-link"           # 主题标题链接
+            # 首先尝试访问最新页面，通常更容易找到主题
+            urls_to_try = [
+                "https://linux.do/latest",
+                "https://linux.do/",
+                "https://linux.do/c/tech/8",
+                "https://linux.do/c/life/7"
             ]
             
             topics = []
-            logger.info("正在搜索主题列表...")
             
-            for i, selector in enumerate(topic_selectors):
-                elements = self.page.eles(selector, timeout=3)
-                logger.debug(f"选择器 '{selector}' 找到 {len(elements)} 个元素")
-                if elements:
-                    topics = elements
-                    logger.success(f"使用选择器 '{selector}' 找到 {len(topics)} 个主题")
-                    break
+            for url in urls_to_try:
+                try:
+                    logger.info(f"尝试访问: {url}")
+                    self.page.get(url)
+                    time.sleep(random.uniform(4, 7))  # 增加等待时间
+                    
+                    # 等待页面动态内容加载
+                    logger.info("等待页面动态内容加载...")
+                    for wait_count in range(5):
+                        time.sleep(2)
+                        # 检查是否有链接加载出来
+                        link_count = self.page.run_js("return document.querySelectorAll('a[href*=\"/t/\"]').length;")
+                        if link_count > 5:
+                            logger.success(f"检测到 {link_count} 个主题链接")
+                            break
+                        logger.debug(f"等待中... 当前链接数: {link_count}")
+                    
+                    # 使用更精确的选择器查找主题，优先使用旧项目中成功的选择器
+                    topic_selectors = [
+                        # 旧项目中成功的选择器（优先级最高）
+                        "#list-area .title",
+                        "#list-area .title a",
+                        # Discourse 论坛的标准选择器
+                        ".topic-list-item .main-link a",
+                        ".topic-list .title a", 
+                        ".topic-list-body .title a",
+                        "tbody tr .main-link a",
+                        # 通用选择器
+                        "a[href*='/t/'][title]",
+                        "a[href*='/t/']:not([href*='/edit']):not([href*='/raw'])",
+                        # 备用选择器
+                        ".topic-title a",
+                        ".raw-topic-link"
+                    ]
+                    
+                    for selector in topic_selectors:
+                        elements = self.page.eles(selector, timeout=3)
+                        if elements and len(elements) >= 3:  # 至少要有3个主题
+                            # 过滤有效的主题链接
+                            valid_topics = []
+                            for element in elements:
+                                href = element.attr("href")
+                                text = element.text
+                                if (href and "/t/" in href and 
+                                    text and len(text.strip()) > 5 and  # 标题长度过滤
+                                    not any(skip in href.lower() for skip in ['/edit', '/raw', '/print'])):
+                                    valid_topics.append(element)
+                            
+                            if len(valid_topics) >= 3:
+                                topics = valid_topics
+                                logger.success(f"在 {url} 使用选择器 '{selector}' 找到 {len(topics)} 个有效主题")
+                                break
+                    
+                    if topics:
+                        break
+                        
+                except Exception as e:
+                    logger.warning(f"访问 {url} 失败: {str(e)}")
+                    continue
             
             # 如果仍然没找到，尝试用JavaScript查找
             if not topics:
@@ -938,93 +981,174 @@ class LinuxDoBrowserOptimized:
     
     @retry_decorator(retries=2, delay=2)
     def browse_single_topic(self, topic_url):
-        """浏览单个主题"""
+        """浏览单个主题 - 基于旧项目逻辑优化"""
         new_page = None
         try:
+            logger.debug(f"正在打开主题: {topic_url}")
             new_page = self.browser.new_tab()
             new_page.get(topic_url)
-            time.sleep(random.uniform(2, 4))
             
-            # 随机决定是否点赞
-            if random.random() < self.config.LIKE_PROBABILITY:
+            # 等待页面加载
+            time.sleep(random.uniform(3, 5))
+            
+            # 检查页面是否正确加载
+            page_title = new_page.title
+            if not page_title or "error" in page_title.lower():
+                logger.warning(f"页面加载异常: {page_title}")
+                return False
+            
+            logger.debug(f"页面加载成功: {page_title[:50]}...")
+            
+            # 基于旧项目的点赞概率 (30%)
+            if random.random() < 0.3:
+                logger.debug("准备尝试点赞...")
                 self.click_like(new_page)
+            else:
+                logger.debug("跳过点赞（基于随机概率）")
             
             # 浏览帖子内容
+            logger.debug("开始浏览帖子内容...")
             self.browse_post_content(new_page)
+            
+            logger.debug("单个主题浏览完成")
+            return True
             
         except Exception as e:
             logger.warning(f"浏览单个主题失败: {str(e)}")
+            return False
         finally:
             if new_page:
                 try:
                     new_page.close()
+                    logger.debug("已关闭主题页面")
                 except:
                     pass
     
     def browse_post_content(self, page):
-        """浏览帖子内容"""
+        """浏览帖子内容 - 基于旧项目优化的滚动逻辑"""
         try:
-            scroll_count = random.randint(self.config.MIN_SCROLL_COUNT, self.config.MAX_SCROLL_COUNT)
+            # 基于旧项目的稳定参数
+            max_scrolls = 10  # 最多滚动10次
+            prev_url = None
             
-            for i in range(scroll_count):
-                # 随机滚动距离
-                scroll_distance = random.randint(
-                    self.config.MIN_SCROLL_DISTANCE, 
-                    self.config.MAX_SCROLL_DISTANCE
-                )
+            logger.debug(f"开始浏览帖子内容，最多滚动 {max_scrolls} 次")
+            
+            for scroll_num in range(max_scrolls):
+                # 使用旧项目中成功的滚动距离范围
+                scroll_distance = random.randint(550, 650)  # 550-650像素
                 
-                logger.debug(f"滚动 {scroll_distance} 像素... ({i+1}/{scroll_count})")
+                logger.debug(f"向下滚动 {scroll_distance} 像素... ({scroll_num+1}/{max_scrolls})")
                 page.run_js(f"window.scrollBy(0, {scroll_distance})")
                 
-                # 随机提前退出
-                if random.random() < self.config.EARLY_EXIT_PROBABILITY:
-                    logger.debug("随机提前退出浏览")
+                # 记录当前页面URL（防止页面跳转）
+                current_url = page.url
+                logger.debug(f"当前页面: {current_url}")
+                
+                # 基于旧项目的提前退出概率
+                if random.random() < 0.03:  # 3%概率随机退出
+                    logger.debug("🎲 随机提前退出浏览")
                     break
                 
-                # 检查是否到达底部
-                at_bottom = page.run_js(
-                    "return (window.innerHeight + window.scrollY) >= document.body.scrollHeight - 200"
-                )
-                if at_bottom:
-                    logger.debug("已到达页面底部")
-                    break
+                # 检查是否到达页面底部
+                try:
+                    at_bottom = page.run_js(
+                        "return window.scrollY + window.innerHeight >= document.body.scrollHeight - 100"
+                    )
+                    
+                    # 如果到达底部且URL没有变化，退出
+                    if current_url != prev_url:
+                        prev_url = current_url
+                    elif at_bottom and prev_url == current_url:
+                        logger.debug("📄 已到达页面底部，退出浏览")
+                        break
+                        
+                except Exception as e:
+                    logger.debug(f"检查页面底部时出错: {e}")
                 
-                # 随机等待时间
-                wait_time = random.uniform(self.config.MIN_WAIT_TIME, self.config.MAX_WAIT_TIME)
+                # 使用旧项目的等待时间范围
+                wait_time = random.uniform(2, 4)  # 2-4秒等待
+                logger.debug(f"等待 {wait_time:.2f} 秒...")
                 time.sleep(wait_time)
+            
+            logger.debug("帖子内容浏览完成")
                 
         except Exception as e:
             logger.warning(f"浏览帖子内容时出错: {str(e)}")
     
     def click_like(self, page):
-        """点赞功能"""
+        """点赞功能 - 基于旧项目的成功经验改进"""
         try:
+            # 基于旧项目的精确选择器
             like_selectors = [
-                ".discourse-reactions-reaction-button",
-                ".like-button",
-                "[data-action='like']",
-                ".btn-like"
+                # 旧项目中成功的选择器
+                '.discourse-reactions-reaction-button[title="点赞此帖子"]',
+                # 其他可能的点赞按钮选择器
+                '.discourse-reactions-reaction-button:not(.reacted)',
+                '.like-button:not(.liked)',
+                '[data-action="like"]:not(.liked)',
+                '.btn-like:not(.liked)',
+                # 通用点赞按钮选择器
+                'button[title*="点赞"]',
+                'button[aria-label*="点赞"]',
+                '.topic-post .actions button[title*="点赞"]'
             ]
             
-            like_buttons = []
-            for selector in like_selectors:
-                elements = page.eles(selector, timeout=2)
-                if elements:
-                    like_buttons = elements
-                    break
+            like_button_found = None
             
-            if like_buttons:
-                like_button = random.choice(like_buttons)
-                logger.debug("找到点赞按钮，准备点赞")
-                
-                # 模拟鼠标悬停
-                time.sleep(random.uniform(0.5, 1.5))
-                like_button.click()
-                logger.info("点赞成功")
-                
-                time.sleep(random.uniform(1, 3))
+            for selector in like_selectors:
+                try:
+                    elements = page.eles(selector, timeout=2)
+                    if elements:
+                        # 检查按钮是否可点击且未被点赞
+                        for element in elements:
+                            # 检查按钮状态
+                            button_text = element.text.lower() if element.text else ""
+                            title_attr = element.attr("title") or ""
+                            class_attr = element.attr("class") or ""
+                            
+                            # 确保是未点赞的按钮
+                            if (not any(reacted in class_attr.lower() for reacted in ['reacted', 'liked', 'active']) and
+                                not any(reacted in title_attr.lower() for reacted in ['已点赞', 'liked']) and
+                                "点赞" in title_attr):
+                                
+                                like_button_found = element
+                                logger.debug(f"找到可点赞按钮: {selector}")
+                                break
+                        
+                        if like_button_found:
+                            break
+                            
+                except Exception as e:
+                    logger.debug(f"检查选择器 {selector} 时出错: {e}")
+                    continue
+            
+            if like_button_found:
+                try:
+                    logger.info("找到未点赞的帖子，准备点赞")
+                    
+                    # 模拟人类行为：短暂等待
+                    time.sleep(random.uniform(0.8, 1.5))
+                    
+                    # 点击点赞按钮
+                    like_button_found.click()
+                    
+                    # 验证点赞是否成功
+                    time.sleep(random.uniform(1, 2))
+                    
+                    # 检查是否点赞成功（按钮状态变化）
+                    updated_class = like_button_found.attr("class") or ""
+                    if any(reacted in updated_class.lower() for reacted in ['reacted', 'liked', 'active']):
+                        logger.success("✅ 点赞成功")
+                    else:
+                        logger.info("点赞操作已执行")
+                    
+                    # 随机等待
+                    time.sleep(random.uniform(1, 3))
+                    
+                except Exception as e:
+                    logger.warning(f"点击点赞按钮时出错: {e}")
             else:
-                logger.debug("未找到可点赞的内容")
+                logger.debug("未找到可点赞的内容或内容已点赞")
                 
         except Exception as e:
             logger.debug(f"点赞操作失败: {str(e)}")
